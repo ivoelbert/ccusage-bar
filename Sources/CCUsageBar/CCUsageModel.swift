@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DailyUsage: Codable, Identifiable {
     let date: String
+    let agent: String?
     let inputTokens: Int
     let outputTokens: Int
     let cacheCreationTokens: Int
@@ -12,6 +13,13 @@ struct DailyUsage: Codable, Identifiable {
     let modelsUsed: [String]
 
     var id: String { date }
+
+    enum CodingKeys: String, CodingKey {
+        case date = "period"
+        case agent
+        case inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens
+        case totalTokens, totalCost, modelsUsed
+    }
 }
 
 private struct CCUsageResponse: Codable {
@@ -68,6 +76,7 @@ final class CCUsageModel: ObservableObject {
             }
             return DailyUsage(
                 date: key,
+                agent: "all",
                 inputTokens: 0,
                 outputTokens: 0,
                 cacheCreationTokens: 0,
@@ -115,7 +124,9 @@ final class CCUsageModel: ObservableObject {
             let output = try await runProcess(executable: bunx, arguments: ["ccusage", "daily", "--json"])
             let data = Data(output.utf8)
             let decoded = try JSONDecoder().decode(CCUsageResponse.self, from: data)
-            self.days = decoded.daily.sorted { $0.date < $1.date }
+            self.days = decoded.daily
+                .filter { $0.agent == nil || $0.agent == "all" }
+                .sorted { $0.date < $1.date }
             self.lastUpdated = Date()
             self.lastError = nil
         } catch {
