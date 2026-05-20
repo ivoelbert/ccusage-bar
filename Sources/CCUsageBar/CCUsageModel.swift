@@ -26,6 +26,21 @@ private struct CCUsageResponse: Codable {
     let daily: [DailyUsage]
 }
 
+private final class DataBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var buffer = Data()
+
+    func append(_ chunk: Data) {
+        lock.lock(); defer { lock.unlock() }
+        buffer.append(chunk)
+    }
+
+    var data: Data {
+        lock.lock(); defer { lock.unlock() }
+        return buffer
+    }
+}
+
 @MainActor
 final class CCUsageModel: ObservableObject {
     @Published var days: [DailyUsage] = []
@@ -165,9 +180,32 @@ final class CCUsageModel: ObservableObject {
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
 
+            // Drain pipes incrementally so a large stdout (>64KB) can't fill the
+            // pipe buffer and deadlock the child before terminationHandler fires.
+            let stdoutBuffer = DataBuffer()
+            let stderrBuffer = DataBuffer()
+            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if chunk.isEmpty {
+                    handle.readabilityHandler = nil
+                } else {
+                    stdoutBuffer.append(chunk)
+                }
+            }
+            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if chunk.isEmpty {
+                    handle.readabilityHandler = nil
+                } else {
+                    stderrBuffer.append(chunk)
+                }
+            }
+
             process.terminationHandler = { proc in
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+                let stdoutData = stdoutBuffer.data + stdoutPipe.fileHandleForReading.availableData
+                let stderrData = stderrBuffer.data + stderrPipe.fileHandleForReading.availableData
                 if proc.terminationStatus == 0 {
                     continuation.resume(returning: String(data: stdoutData, encoding: .utf8) ?? "")
                 } else {
