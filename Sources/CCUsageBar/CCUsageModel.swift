@@ -59,6 +59,12 @@ final class CCUsageModel: ObservableObject {
         "/usr/local/bin/bunx"
     ]
 
+    // Fallback for when @latest is broken (20.0.10 shipped a native binary
+    // linked against a /nix/store path and crashed at load). npm releases are
+    // immutable and bunx caches pinned specs forever, so this fallback works
+    // even offline once cached.
+    private static let pinnedCCUsage = "ccusage@20.0.11"
+
     init() {
         Task { await refresh() }
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -136,17 +142,31 @@ final class CCUsageModel: ObservableObject {
         }
 
         do {
-            let output = try await runProcess(executable: bunx, arguments: ["ccusage", "daily", "--json"])
-            let data = Data(output.utf8)
-            let decoded = try JSONDecoder().decode(CCUsageResponse.self, from: data)
-            self.days = decoded.daily
-                .filter { $0.agent == nil || $0.agent == "all" }
-                .sorted { $0.date < $1.date }
+            self.days = try await fetchDays(bunx: bunx)
             self.lastUpdated = Date()
             self.lastError = nil
         } catch {
             self.lastError = "\(error)"
         }
+    }
+
+    // @latest keeps us current (new features, log-format changes); the pinned
+    // release catches a broken publish, whether it crashes or emits JSON we
+    // can no longer decode.
+    private func fetchDays(bunx: String) async throws -> [DailyUsage] {
+        do {
+            return try await runAndDecode(bunx: bunx, spec: "ccusage@latest")
+        } catch {
+            return try await runAndDecode(bunx: bunx, spec: Self.pinnedCCUsage)
+        }
+    }
+
+    private func runAndDecode(bunx: String, spec: String) async throws -> [DailyUsage] {
+        let output = try await runProcess(executable: bunx, arguments: [spec, "daily", "--json"])
+        let decoded = try JSONDecoder().decode(CCUsageResponse.self, from: Data(output.utf8))
+        return decoded.daily
+            .filter { $0.agent == nil || $0.agent == "all" }
+            .sorted { $0.date < $1.date }
     }
 
     func rotateManagerMessage() {

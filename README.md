@@ -2,7 +2,7 @@
 
 A tiny macOS menu bar app that shows your Claude Code token spending for today, with a popover detailing the last 7 days and your month-to-date total.
 
-Data comes from [`ccusage`](https://github.com/ryoppippi/ccusage) (`bunx ccusage daily --json`).
+Data comes from [`ccusage`](https://github.com/ryoppippi/ccusage) (`bunx ccusage@latest daily --json`, falling back to a pinned known-good release if latest crashes or its output no longer parses).
 
 ## Features
 
